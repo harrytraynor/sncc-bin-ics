@@ -36,9 +36,9 @@ can revalidate with the CDN rather than retaining their own cached copy, so
 schedule changes are picked up promptly without sending every request to the function;
 the exact client-cache behavior depends on the calendar application.
 
-Structured metrics are written to function logs for cache misses, upstream failures,
-empty calendars, refresh latency, and execution time. Create DigitalOcean log alerts
-for `upstream_error` and `empty_calendar`, and monitor `function_duration_ms`.
+Structured metrics are written to function logs for upstream failures, empty calendars,
+calendar generation latency, and execution time. Create DigitalOcean log alerts for
+`upstream_error` and `empty_calendar`, and monitor `function_duration_ms`.
 
 ## Example Output
 - Calendar events for all bin collection dates (all-day)

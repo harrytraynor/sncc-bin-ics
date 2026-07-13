@@ -180,8 +180,7 @@ function responseForCalendar(ics) {
     const headers = {
         'Content-Type': 'text/calendar; charset=utf-8',
         'Content-Disposition': 'inline; filename="bin-collections.ics"',
-        'Cache-Control': `public, max-age=0, s-maxage=${CACHE_TTL_SECONDS}, stale-if-error=${STALE_IF_ERROR_SECONDS}`,
-        'X-Cache': 'MISS'
+        'Cache-Control': `public, max-age=0, s-maxage=${CACHE_TTL_SECONDS}, stale-if-error=${STALE_IF_ERROR_SECONDS}`
     };
     return { statusCode: 200, headers, body: ics };
 }
@@ -239,7 +238,7 @@ exports.main = async (event, context) => {
             'BEGIN:VEVENT\nTRANSP:TRANSPARENT\nX-MICROSOFT-CDO-BUSYSTATUS:FREE'
         );
 
-        logMetric('upstream_refresh_ms', Date.now() - startedAt);
+        logMetric('calendar_generation_ms', Date.now() - startedAt);
         return responseForCalendar(valuePatched);
 
     } catch (err) {
