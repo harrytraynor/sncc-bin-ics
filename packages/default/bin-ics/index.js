@@ -12,12 +12,14 @@ const { createClient } = require('redis');
 // the result is an HTML calendar that needs to be parsed.
 const BASE_URL = 'https://collections-southnorfolk.azurewebsites.net';
 const COUNCIL_CODE = 'SNO';
+const HTTP_TOO_MANY_REQUESTS = 429;
+const HTTP_DATE_PRECISION_MS = 1000;
 // Change this to your own property's UPRN, e.g. by looking it up at
 // https://collections-southnorfolk.azurewebsites.net/calendar.aspx
 const UPRN = process.env.UPRN || '2630184867';
-const configuredCacheTtl = Number.parseInt(process.env.CACHE_TTL_SECONDS || '43200', 10);
-const CACHE_TTL_SECONDS = Number.isFinite(configuredCacheTtl)
-    ? Math.min(Math.max(configuredCacheTtl, 21600), 86400)
+const CONFIGURED_CACHE_TTL = Number.parseInt(process.env.CACHE_TTL_SECONDS || '43200', 10);
+const CACHE_TTL_SECONDS = Number.isFinite(CONFIGURED_CACHE_TTL)
+    ? Math.min(Math.max(CONFIGURED_CACHE_TTL, 21600), 86400)
     : 43200;
 const CACHE_KEY = `bin-ics:v1:${UPRN}`;
 const httpAgent = new Agent({ keepAlive: true, maxSockets: 10 });
@@ -61,7 +63,7 @@ async function requestWithRetry(request) {
         } catch (error) {
             lastError = error;
             const status = error.response?.status;
-            if (status && status < 500 && status !== 429) throw error;
+            if (status && status < 500 && status !== HTTP_TOO_MANY_REQUESTS) throw error;
         }
 
         if (attempt < 2) {
@@ -180,14 +182,15 @@ async function getRedisClient() {
 
     redisClient = createClient({ url: process.env.REDIS_URL });
     redisClient.on('error', (error) => logMetric('redis_error', 1, { message: error.message }));
-    redisConnection = redisClient.connect()
-        .then(() => redisClient)
+    redisConnection = redisClient.connect().then(() => {
+        const connectedClient = redisClient;
+        redisConnection = undefined;
+        return connectedClient;
+    })
         .catch((error) => {
             redisClient = undefined;
-            throw error;
-        })
-        .finally(() => {
             redisConnection = undefined;
+            throw error;
         });
     return redisConnection;
 }
@@ -227,7 +230,8 @@ function responseForCalendar(event, calendar, cacheStatus) {
     const ifModifiedSince = requestHeaders['if-modified-since'] || requestHeaders['If-Modified-Since'];
     if (ifNoneMatch === calendar.etag ||
         (!ifNoneMatch && ifModifiedSince &&
-            new Date(ifModifiedSince).getTime() >= new Date(calendar.createdAt).getTime() - 999)) {
+            // HTTP dates are only precise to seconds, unlike the ISO timestamp in Redis.
+            new Date(ifModifiedSince).getTime() >= new Date(calendar.createdAt).getTime() - HTTP_DATE_PRECISION_MS)) {
         return { statusCode: 304, headers, body: '' };
     }
     return { statusCode: 200, headers, body: calendar.ics };
