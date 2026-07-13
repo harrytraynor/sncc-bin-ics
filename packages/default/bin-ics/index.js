@@ -17,9 +17,9 @@ const HTTP_DATE_PRECISION_MS = 1000;
 // Change this to your own property's UPRN, e.g. by looking it up at
 // https://collections-southnorfolk.azurewebsites.net/calendar.aspx
 const UPRN = process.env.UPRN || '2630184867';
-const CONFIGURED_CACHE_TTL = Number.parseInt(process.env.CACHE_TTL_SECONDS || '43200', 10);
-const CACHE_TTL_SECONDS = Number.isFinite(CONFIGURED_CACHE_TTL)
-    ? Math.min(Math.max(CONFIGURED_CACHE_TTL, 21600), 86400)
+const RAW_CACHE_TTL = Number.parseInt(process.env.CACHE_TTL_SECONDS || '43200', 10);
+const CACHE_TTL_SECONDS = Number.isFinite(RAW_CACHE_TTL)
+    ? Math.min(Math.max(RAW_CACHE_TTL, 21600), 86400)
     : 43200;
 const CACHE_KEY = `bin-ics:v1:${UPRN}`;
 const httpAgent = new Agent({ keepAlive: true, maxSockets: 10 });
@@ -236,7 +236,7 @@ function responseForCalendar(event, calendar, cacheStatus) {
     if (ifNoneMatch === calendar.etag ||
         (!ifNoneMatch && ifModifiedSince &&
             // HTTP dates are only precise to seconds, unlike the ISO timestamp in Redis.
-            new Date(ifModifiedSince).getTime() > new Date(calendar.createdAt).getTime() - HTTP_DATE_PRECISION_MS)) {
+            new Date(ifModifiedSince).getTime() >= new Date(calendar.createdAt).getTime() - HTTP_DATE_PRECISION_MS)) {
         return { statusCode: 304, headers, body: '' };
     }
     return { statusCode: 200, headers, body: calendar.ics };
