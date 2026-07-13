@@ -1,6 +1,6 @@
 # Bin Collection ICS Calendar API
 
-Automatically generate a live .ics calendar feed for your local bin collection schedule, using the South Norfolk (ReCollect) waste API.  
+Automatically generate a live .ics calendar feed for your local bin collection schedule, using South Norfolk Council's bin collection calendar service.  
 Deployable as a DigitalOcean Function (Node.js 18).
 
 ## Features
@@ -32,7 +32,7 @@ The function serves an `.ics` file at: GET /default/bin-ics
 - Events are “free” (do not show as busy in Outlook/Google Calendar)
 
 ## Configuration
-If you need to change area or date range, edit `BIN_API_URL` in the function code.
+If you need to change property or date range, edit the `UPRN` constant in the function code (or set it via the `UPRN` environment variable). Find your UPRN by looking up your address at https://collections-southnorfolk.azurewebsites.net/calendar.aspx.
 
 ## Caveats
 - Reminders on all-day events will fire at **midnight** the day before (ICS limitation).
