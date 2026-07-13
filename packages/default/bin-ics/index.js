@@ -1,6 +1,9 @@
 const axios = require('axios');
 const cheerio = require('cheerio');
 const { createEvents } = require('ics');
+const { createHash } = require('crypto');
+const { Agent } = require('https');
+const { createClient } = require('redis');
 
 // The council (South Norfolk) migrated its bin collection data away from the
 // old ReCollect API to a bespoke ASP.NET service hosted on Azure. The service
@@ -12,6 +15,14 @@ const COUNCIL_CODE = 'SNO';
 // Change this to your own property's UPRN, e.g. by looking it up at
 // https://collections-southnorfolk.azurewebsites.net/calendar.aspx
 const UPRN = process.env.UPRN || '2630184867';
+const configuredCacheTtl = Number.parseInt(process.env.CACHE_TTL_SECONDS || '43200', 10);
+const CACHE_TTL_SECONDS = Number.isFinite(configuredCacheTtl)
+    ? Math.min(Math.max(configuredCacheTtl, 21600), 86400)
+    : 43200;
+const CACHE_KEY = `bin-ics:v1:${UPRN}`;
+const httpAgent = new Agent({ keepAlive: true, maxSockets: 10 });
+let redisClient;
+let redisConnection;
 
 const BIN_TYPES = [
     { name: 'General Waste', keys: ['ref date', 'ref this'] },
@@ -36,10 +47,41 @@ function parseSetCookie(setCookieHeader) {
     return cookies.map((c) => c.split(';')[0]).join('; ');
 }
 
+function logMetric(name, value, extra = {}) {
+    console.log(JSON.stringify({ type: 'metric', name, value, ...extra }));
+}
+
+async function requestWithRetry(request) {
+    let lastError;
+    for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+            const response = await request();
+            if (response.status < 500) return response;
+            lastError = new Error(`Upstream returned HTTP ${response.status}`);
+        } catch (error) {
+            lastError = error;
+            const status = error.response?.status;
+            if (status && status < 500 && status !== 429) throw error;
+        }
+
+        if (attempt < 2) {
+            await new Promise((resolve) => setTimeout(resolve, 250 * 2 ** attempt));
+        }
+    }
+    throw lastError;
+}
+
 async function fetchCalendarHtml() {
     // The service relies on a session cookie issued when loading the calendar
     // page, which must then be sent along with the SOAP request below.
-    const pageResponse = await axios.get(`${BASE_URL}/calendar.aspx`, { timeout: 10000 });
+    const pageResponse = await requestWithRetry(() => axios.get(`${BASE_URL}/calendar.aspx`, {
+        timeout: 10000,
+        httpsAgent: httpAgent,
+        validateStatus: () => true
+    }));
+    if (pageResponse.status >= 400) {
+        throw new Error(`Calendar page returned HTTP ${pageResponse.status}`);
+    }
     const cookie = parseSetCookie(pageResponse.headers['set-cookie']);
 
     const soapBody = `<?xml version="1.0" encoding="utf-8"?>
@@ -53,13 +95,18 @@ async function fetchCalendarHtml() {
   </soap:Body>
 </soap:Envelope>`;
 
-    const soapResponse = await axios.post(`${BASE_URL}/WSCollExternal.asmx`, soapBody, {
+    const soapResponse = await requestWithRetry(() => axios.post(`${BASE_URL}/WSCollExternal.asmx`, soapBody, {
         timeout: 10000,
+        httpsAgent: httpAgent,
+        validateStatus: () => true,
         headers: {
             'Content-Type': 'text/xml; charset=utf-8',
             Cookie: cookie
         }
-    });
+    }));
+    if (soapResponse.status >= 400) {
+        throw new Error(`Calendar service returned HTTP ${soapResponse.status}`);
+    }
 
     const $envelope = cheerio.load(soapResponse.data, { xmlMode: true });
     const encodedCalendar = $envelope('getRoundCalendarForUPRNResult').text();
@@ -126,8 +173,88 @@ function getTodayAtMidnight() {
     return today;
 }
 
-exports.main = async (event, context) => {
+async function getRedisClient() {
+    if (!process.env.REDIS_URL) return null;
+    if (redisClient?.isOpen) return redisClient;
+    if (redisConnection) return redisConnection;
+
+    redisClient = createClient({ url: process.env.REDIS_URL });
+    redisClient.on('error', (error) => logMetric('redis_error', 1, { message: error.message }));
+    redisConnection = redisClient.connect()
+        .then(() => redisClient)
+        .catch((error) => {
+            redisClient = undefined;
+            throw error;
+        })
+        .finally(() => {
+            redisConnection = undefined;
+        });
+    return redisConnection;
+}
+
+async function getCachedCalendar() {
     try {
+        const client = await getRedisClient();
+        if (!client) return null;
+        const cached = await client.get(CACHE_KEY);
+        return cached ? JSON.parse(cached) : null;
+    } catch (error) {
+        logMetric('cache_read_error', 1, { message: error.message });
+        return null;
+    }
+}
+
+async function cacheCalendar(calendar) {
+    try {
+        const client = await getRedisClient();
+        if (client) await client.set(CACHE_KEY, JSON.stringify(calendar));
+    } catch (error) {
+        logMetric('cache_write_error', 1, { message: error.message });
+    }
+}
+
+function responseForCalendar(event, calendar, cacheStatus) {
+    const headers = {
+        'Content-Type': 'text/calendar; charset=utf-8',
+        'Content-Disposition': 'inline; filename="bin-collections.ics"',
+        'Cache-Control': `public, max-age=0, s-maxage=${CACHE_TTL_SECONDS}, stale-if-error=86400`,
+        ETag: calendar.etag,
+        'Last-Modified': new Date(calendar.createdAt).toUTCString(),
+        'X-Cache': cacheStatus
+    };
+    const requestHeaders = event?.headers || {};
+    const ifNoneMatch = requestHeaders['if-none-match'] || requestHeaders['If-None-Match'];
+    const ifModifiedSince = requestHeaders['if-modified-since'] || requestHeaders['If-Modified-Since'];
+    if (ifNoneMatch === calendar.etag ||
+        (!ifNoneMatch && ifModifiedSince &&
+            new Date(ifModifiedSince).getTime() >= new Date(calendar.createdAt).getTime() - 999)) {
+        return { statusCode: 304, headers, body: '' };
+    }
+    return { statusCode: 200, headers, body: calendar.ics };
+}
+
+function createCachedCalendar(ics) {
+    return {
+        ics,
+        createdAt: new Date().toISOString(),
+        etag: `"${createHash('sha256').update(ics).digest('hex')}"`
+    };
+}
+
+exports.main = async (event, context) => {
+    const startedAt = Date.now();
+    const cachedCalendar = await getCachedCalendar();
+    const cacheAgeSeconds = cachedCalendar
+        ? (Date.now() - new Date(cachedCalendar.createdAt).getTime()) / 1000
+        : Infinity;
+    if (cachedCalendar && cacheAgeSeconds < CACHE_TTL_SECONDS) {
+        logMetric('cache_hit', 1, { cache_age_seconds: Math.floor(cacheAgeSeconds) });
+        logMetric('function_duration_ms', Date.now() - startedAt);
+        return responseForCalendar(event, cachedCalendar, 'HIT');
+    }
+
+    try {
+        logMetric('cache_miss', 1);
         const calendarHtml = await fetchCalendarHtml();
         const binDays = extractBinDays(calendarHtml);
 
@@ -154,6 +281,7 @@ exports.main = async (event, context) => {
         }
 
         if (!events.length) {
+            logMetric('empty_calendar', 1);
             return {
                 statusCode: 500,
                 headers: { 'Content-Type': 'text/plain' },
@@ -176,21 +304,23 @@ exports.main = async (event, context) => {
             'BEGIN:VEVENT\nTRANSP:TRANSPARENT\nX-MICROSOFT-CDO-BUSYSTATUS:FREE'
         );
 
-        return {
-            statusCode: 200,
-            headers: {
-                'Content-Type': 'text/calendar',
-                'Content-Disposition': 'inline; filename="bin-collections.ics"',
-                'Cache-Control': 'max-age=3600'
-            },
-            body: valuePatched
-        };
+        const calendar = createCachedCalendar(valuePatched);
+        await cacheCalendar(calendar);
+        logMetric('upstream_refresh_ms', Date.now() - startedAt);
+        return responseForCalendar(event, calendar, 'MISS');
 
     } catch (err) {
+        if (cachedCalendar) {
+            logMetric('stale_cache_served', 1);
+            return responseForCalendar(event, cachedCalendar, 'STALE');
+        }
+        logMetric('upstream_error', 1, { message: err.message });
         return {
             statusCode: 500,
             headers: { 'Content-Type': 'text/plain' },
             body: 'Error generating calendar: ' + err.toString()
         };
+    } finally {
+        logMetric('function_duration_ms', Date.now() - startedAt);
     }
 };

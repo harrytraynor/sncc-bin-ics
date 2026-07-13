@@ -2,5 +2,5 @@ packages:
   - name: default
     functions:
       - name: bin-ics
-        runtime: nodejs:18   # or nodejs:default if you must
+        runtime: nodejs:22
         web: true
