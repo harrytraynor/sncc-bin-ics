@@ -14,13 +14,18 @@ const BASE_URL = 'https://collections-southnorfolk.azurewebsites.net';
 const COUNCIL_CODE = 'SNO';
 const HTTP_TOO_MANY_REQUESTS = 429;
 const HTTP_DATE_PRECISION_MS = 1000;
+const RETRY_BASE_DELAY_MS = 250;
+const MIN_CACHE_TTL_SECONDS = 21600;
+const DEFAULT_CACHE_TTL_SECONDS = 43200;
+const MAX_CACHE_TTL_SECONDS = 86400;
+const STALE_IF_ERROR_SECONDS = 86400;
 // Change this to your own property's UPRN, e.g. by looking it up at
 // https://collections-southnorfolk.azurewebsites.net/calendar.aspx
 const UPRN = process.env.UPRN || '2630184867';
-const RAW_CACHE_TTL = Number.parseInt(process.env.CACHE_TTL_SECONDS || '43200', 10);
+const RAW_CACHE_TTL = Number.parseInt(process.env.CACHE_TTL_SECONDS || DEFAULT_CACHE_TTL_SECONDS, 10);
 const CACHE_TTL_SECONDS = Number.isFinite(RAW_CACHE_TTL)
-    ? Math.min(Math.max(RAW_CACHE_TTL, 21600), 86400)
-    : 43200;
+    ? Math.min(Math.max(RAW_CACHE_TTL, MIN_CACHE_TTL_SECONDS), MAX_CACHE_TTL_SECONDS)
+    : DEFAULT_CACHE_TTL_SECONDS;
 const CACHE_KEY = `bin-ics:v1:${UPRN}`;
 const httpAgent = new Agent({ keepAlive: true, maxSockets: 10 });
 let redisClient;
@@ -67,7 +72,7 @@ async function requestWithRetry(request) {
         }
 
         if (attempt < 2) {
-            await new Promise((resolve) => setTimeout(resolve, 250 * 2 ** attempt));
+            await new Promise((resolve) => setTimeout(resolve, RETRY_BASE_DELAY_MS * 2 ** attempt));
         }
     }
     throw lastError;
@@ -222,12 +227,13 @@ async function cacheCalendar(calendar) {
 }
 
 function responseForCalendar(event, calendar, cacheStatus) {
+    const lastModified = new Date(calendar.createdAt);
     const headers = {
         'Content-Type': 'text/calendar; charset=utf-8',
         'Content-Disposition': 'inline; filename="bin-collections.ics"',
-        'Cache-Control': `public, max-age=0, s-maxage=${CACHE_TTL_SECONDS}, stale-if-error=86400`,
+        'Cache-Control': `public, max-age=0, s-maxage=${CACHE_TTL_SECONDS}, stale-if-error=${STALE_IF_ERROR_SECONDS}`,
         ETag: calendar.etag,
-        'Last-Modified': new Date(calendar.createdAt).toUTCString(),
+        'Last-Modified': lastModified.toUTCString(),
         'X-Cache': cacheStatus
     };
     const requestHeaders = event?.headers ?? {};
@@ -236,7 +242,7 @@ function responseForCalendar(event, calendar, cacheStatus) {
     if (ifNoneMatch === calendar.etag ||
         (!ifNoneMatch && ifModifiedSince &&
             // HTTP dates are only precise to seconds, unlike the ISO timestamp in Redis.
-            new Date(ifModifiedSince).getTime() >= new Date(calendar.createdAt).getTime() - HTTP_DATE_PRECISION_MS)) {
+            new Date(ifModifiedSince).getTime() >= lastModified.getTime() - HTTP_DATE_PRECISION_MS)) {
         return { statusCode: 304, headers, body: '' };
     }
     return { statusCode: 200, headers, body: calendar.ics };
