@@ -28,25 +28,14 @@ The function serves an `.ics` file at: GET /default/bin-ics
 
 ### Performance and resilience
 
-Set `REDIS_URL` to the TLS connection URL for a DigitalOcean Managed Redis database
-(normally `rediss://...`). The function caches each UPRN's rendered ICS feed for 12
-hours by default, so cache hits do not call the council service. Set
-`CACHE_TTL_SECONDS` to a value between 21600 and 86400 to change that period.
+No database is required. Place the function behind a CDN-enabled custom domain:
+its `Cache-Control` header caches the feed for 12 hours by default and serves stale
+content for up to one day when the origin is unavailable. Set `CACHE_TTL_SECONDS`
+to a value between 21600 and 86400 to change the CDN cache period.
 
-The cache key is scoped by UPRN. Redis records are retained for twice their freshness
-period; if a refresh fails in that window, the last valid feed is served with `X-Cache: STALE`.
-If Redis is unavailable, the function continues to generate feeds directly.
-
-The response includes `ETag` and `Last-Modified`, allowing calendar clients to
-revalidate without downloading unchanged content. Its `Cache-Control` header is
-configured for a DigitalOcean CDN: place the function behind a CDN-enabled custom
-domain, which will cache the feed for the same TTL and serve stale content for up to
-one day when the origin is unavailable.
-
-Structured metrics are written to function logs for cache hits/misses, stale-cache
-responses, upstream failures, empty calendars, refresh latency, and execution time.
-Create DigitalOcean log alerts for `upstream_error`, `empty_calendar`, and
-`stale_cache_served`, and monitor `function_duration_ms` and `cache_hit`.
+Structured metrics are written to function logs for cache misses, upstream failures,
+empty calendars, refresh latency, and execution time. Create DigitalOcean log alerts
+for `upstream_error` and `empty_calendar`, and monitor `function_duration_ms`.
 
 ## Example Output
 - Calendar events for all bin collection dates (all-day)

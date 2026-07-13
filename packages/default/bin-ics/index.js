@@ -1,9 +1,7 @@
 const axios = require('axios');
 const cheerio = require('cheerio');
 const { createEvents } = require('ics');
-const { createHash } = require('crypto');
 const { Agent } = require('https');
-const { createClient } = require('redis');
 
 // The council (South Norfolk) migrated its bin collection data away from the
 // old ReCollect API to a bespoke ASP.NET service hosted on Azure. The service
@@ -13,7 +11,6 @@ const { createClient } = require('redis');
 const BASE_URL = 'https://collections-southnorfolk.azurewebsites.net';
 const COUNCIL_CODE = 'SNO';
 const HTTP_TOO_MANY_REQUESTS = 429;
-const HTTP_DATE_PRECISION_MS = 1000;
 const RETRY_BASE_DELAY_MS = 250;
 const MIN_CACHE_TTL_SECONDS = 21600;
 const DEFAULT_CACHE_TTL_SECONDS = 43200;
@@ -26,10 +23,7 @@ const RAW_CACHE_TTL = Number.parseInt(process.env.CACHE_TTL_SECONDS || DEFAULT_C
 const CACHE_TTL_SECONDS = Number.isFinite(RAW_CACHE_TTL)
     ? Math.min(Math.max(RAW_CACHE_TTL, MIN_CACHE_TTL_SECONDS), MAX_CACHE_TTL_SECONDS)
     : DEFAULT_CACHE_TTL_SECONDS;
-const CACHE_KEY = `bin-ics:v1:${UPRN}`;
 const httpAgent = new Agent({ keepAlive: true, maxSockets: 10 });
-let redisClient;
-let redisConnection;
 
 const BIN_TYPES = [
     { name: 'General Waste', keys: ['ref date', 'ref this'] },
@@ -180,94 +174,18 @@ function getTodayAtMidnight() {
     return today;
 }
 
-async function getRedisClient() {
-    if (!process.env.REDIS_URL) return null;
-    if (redisClient?.isOpen) return redisClient;
-    if (redisConnection) return redisConnection;
-
-    redisClient = createClient({ url: process.env.REDIS_URL });
-    redisClient.on('error', (error) => logMetric('redis_error', 1, { message: error.message }));
-    redisConnection = redisClient.connect().then(() => {
-        const connectedClient = redisClient;
-        redisConnection = undefined;
-        return connectedClient;
-    })
-        .catch((error) => {
-            redisClient = undefined;
-            redisConnection = undefined;
-            throw error;
-        });
-    return redisConnection;
-}
-
-async function getCachedCalendar() {
-    try {
-        const client = await getRedisClient();
-        if (!client) return null;
-        const cached = await client.get(CACHE_KEY);
-        return cached ? JSON.parse(cached) : null;
-    } catch (error) {
-        logMetric('cache_read_error', 1, { message: error.message });
-        return null;
-    }
-}
-
-async function cacheCalendar(calendar) {
-    try {
-        const client = await getRedisClient();
-        if (client) {
-            await client.set(CACHE_KEY, JSON.stringify(calendar), {
-                // Preserve a stale response for one additional freshness period.
-                EX: CACHE_TTL_SECONDS * 2
-            });
-        }
-    } catch (error) {
-        logMetric('cache_write_error', 1, { message: error.message });
-    }
-}
-
-function responseForCalendar(event, calendar, cacheStatus) {
-    const lastModified = new Date(calendar.createdAt);
+function responseForCalendar(ics) {
     const headers = {
         'Content-Type': 'text/calendar; charset=utf-8',
         'Content-Disposition': 'inline; filename="bin-collections.ics"',
         'Cache-Control': `public, max-age=0, s-maxage=${CACHE_TTL_SECONDS}, stale-if-error=${STALE_IF_ERROR_SECONDS}`,
-        ETag: calendar.etag,
-        'Last-Modified': lastModified.toUTCString(),
-        'X-Cache': cacheStatus
+        'X-Cache': 'MISS'
     };
-    const requestHeaders = event?.headers ?? {};
-    const ifNoneMatch = requestHeaders['if-none-match'] || requestHeaders['If-None-Match'];
-    const ifModifiedSince = requestHeaders['if-modified-since'] || requestHeaders['If-Modified-Since'];
-    if (ifNoneMatch === calendar.etag ||
-        (!ifNoneMatch && ifModifiedSince &&
-            // HTTP dates are only precise to seconds, unlike the ISO timestamp in Redis.
-            new Date(ifModifiedSince).getTime() >= lastModified.getTime() - HTTP_DATE_PRECISION_MS)) {
-        return { statusCode: 304, headers, body: '' };
-    }
-    return { statusCode: 200, headers, body: calendar.ics };
-}
-
-function createCachedCalendar(ics) {
-    return {
-        ics,
-        createdAt: new Date().toISOString(),
-        etag: `"${createHash('sha256').update(ics).digest('hex')}"`
-    };
+    return { statusCode: 200, headers, body: ics };
 }
 
 exports.main = async (event, context) => {
     const startedAt = Date.now();
-    const cachedCalendar = await getCachedCalendar();
-    const cacheAgeSeconds = cachedCalendar
-        ? (Date.now() - new Date(cachedCalendar.createdAt).getTime()) / 1000
-        : Infinity;
-    if (cachedCalendar && cacheAgeSeconds < CACHE_TTL_SECONDS) {
-        logMetric('cache_hit', 1, { cache_age_seconds: Math.floor(cacheAgeSeconds) });
-        logMetric('function_duration_ms', Date.now() - startedAt);
-        return responseForCalendar(event, cachedCalendar, 'HIT');
-    }
-
     try {
         logMetric('cache_miss', 1);
         const calendarHtml = await fetchCalendarHtml();
@@ -319,16 +237,10 @@ exports.main = async (event, context) => {
             'BEGIN:VEVENT\nTRANSP:TRANSPARENT\nX-MICROSOFT-CDO-BUSYSTATUS:FREE'
         );
 
-        const calendar = createCachedCalendar(valuePatched);
-        await cacheCalendar(calendar);
         logMetric('upstream_refresh_ms', Date.now() - startedAt);
-        return responseForCalendar(event, calendar, 'MISS');
+        return responseForCalendar(valuePatched);
 
     } catch (err) {
-        if (cachedCalendar) {
-            logMetric('stale_cache_served', 1);
-            return responseForCalendar(event, cachedCalendar, 'STALE');
-        }
         logMetric('upstream_error', 1, { message: err.message });
         return {
             statusCode: 500,
