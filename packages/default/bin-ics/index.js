@@ -188,7 +188,7 @@ function responseForCalendar(ics) {
 exports.main = async (event, context) => {
     const startedAt = Date.now();
     try {
-        logMetric('cache_miss', 1);
+        logMetric('function_invocation', 1);
         const calendarHtml = await fetchCalendarHtml();
         const binDays = extractBinDays(calendarHtml);
 
