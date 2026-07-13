@@ -210,7 +210,11 @@ async function getCachedCalendar() {
 async function cacheCalendar(calendar) {
     try {
         const client = await getRedisClient();
-        if (client) await client.set(CACHE_KEY, JSON.stringify(calendar));
+        if (client) {
+            await client.set(CACHE_KEY, JSON.stringify(calendar), {
+                EX: CACHE_TTL_SECONDS * 2
+            });
+        }
     } catch (error) {
         logMetric('cache_write_error', 1, { message: error.message });
     }
@@ -225,13 +229,13 @@ function responseForCalendar(event, calendar, cacheStatus) {
         'Last-Modified': new Date(calendar.createdAt).toUTCString(),
         'X-Cache': cacheStatus
     };
-    const requestHeaders = event?.headers || {};
+    const requestHeaders = event?.headers ?? {};
     const ifNoneMatch = requestHeaders['if-none-match'] || requestHeaders['If-None-Match'];
     const ifModifiedSince = requestHeaders['if-modified-since'] || requestHeaders['If-Modified-Since'];
     if (ifNoneMatch === calendar.etag ||
         (!ifNoneMatch && ifModifiedSince &&
             // HTTP dates are only precise to seconds, unlike the ISO timestamp in Redis.
-            new Date(ifModifiedSince).getTime() >= new Date(calendar.createdAt).getTime() - HTTP_DATE_PRECISION_MS)) {
+            new Date(ifModifiedSince).getTime() > new Date(calendar.createdAt).getTime() - HTTP_DATE_PRECISION_MS)) {
         return { statusCode: 304, headers, body: '' };
     }
     return { statusCode: 200, headers, body: calendar.ics };

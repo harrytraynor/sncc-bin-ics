@@ -33,8 +33,8 @@ Set `REDIS_URL` to the TLS connection URL for a DigitalOcean Managed Redis datab
 hours by default, so cache hits do not call the council service. Set
 `CACHE_TTL_SECONDS` to a value between 21600 and 86400 to change that period.
 
-The cache key is scoped by UPRN. Redis records are retained after their freshness
-period; if a refresh fails, the last valid feed is served with `X-Cache: STALE`.
+The cache key is scoped by UPRN. Redis records are retained for twice their freshness
+period; if a refresh fails in that window, the last valid feed is served with `X-Cache: STALE`.
 If Redis is unavailable, the function continues to generate feeds directly.
 
 The response includes `ETag` and `Last-Modified`, allowing calendar clients to
