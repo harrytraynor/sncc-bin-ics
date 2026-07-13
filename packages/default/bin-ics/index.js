@@ -19,7 +19,9 @@ const STALE_IF_ERROR_SECONDS = 86400;
 // Change this to your own property's UPRN, e.g. by looking it up at
 // https://collections-southnorfolk.azurewebsites.net/calendar.aspx
 const UPRN = process.env.UPRN || '2630184867';
-const RAW_CACHE_TTL = Number.parseInt(process.env.CACHE_TTL_SECONDS || DEFAULT_CACHE_TTL_SECONDS, 10);
+const RAW_CACHE_TTL = process.env.CACHE_TTL_SECONDS === undefined
+    ? DEFAULT_CACHE_TTL_SECONDS
+    : Number.parseInt(process.env.CACHE_TTL_SECONDS, 10);
 const CACHE_TTL_SECONDS = Number.isFinite(RAW_CACHE_TTL)
     ? Math.min(Math.max(RAW_CACHE_TTL, MIN_CACHE_TTL_SECONDS), MAX_CACHE_TTL_SECONDS)
     : DEFAULT_CACHE_TTL_SECONDS;
