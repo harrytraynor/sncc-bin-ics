@@ -25,6 +25,11 @@ const MONTHS = [
     'july', 'august', 'september', 'october', 'november', 'december'
 ];
 
+/**
+ * Extracts the `name=value` pairs from a raw `Set-Cookie` response header
+ * (or array of headers) and joins them into a single string suitable for
+ * use in a `Cookie` request header.
+ */
 function parseSetCookie(setCookieHeader) {
     if (!setCookieHeader) return '';
     const cookies = Array.isArray(setCookieHeader) ? setCookieHeader : [setCookieHeader];
@@ -59,7 +64,7 @@ async function fetchCalendarHtml() {
     const $envelope = cheerio.load(soapResponse.data, { xmlMode: true });
     const encodedCalendar = $envelope('getRoundCalendarForUPRNResult').text();
     if (!encodedCalendar) {
-        throw new Error('Could not find calendar data in council response.');
+        throw new Error(`Could not find calendar data in council response for UPRN ${UPRN}. Verify the UPRN is valid for South Norfolk Council.`);
     }
 
     return encodedCalendar;
@@ -97,9 +102,9 @@ function extractBinDays(calendarHtml) {
                 const $cell = $(cells[cellIndex]);
                 if ($cell.find('svg').length === 0) continue;
 
-                const cellContent = $cell.html() || '';
+                const cellContentLower = ($cell.html() || '').toLowerCase();
                 const matchedBins = BIN_TYPES.filter((bin) =>
-                    bin.keys.some((key) => cellContent.toLowerCase().includes(key.toLowerCase()))
+                    bin.keys.some((key) => cellContentLower.includes(key.toLowerCase()))
                 );
                 if (matchedBins.length === 0) continue;
 
@@ -111,13 +116,22 @@ function extractBinDays(calendarHtml) {
     return binDays;
 }
 
+/**
+ * Returns a Date object representing midnight (start of day) today, in the
+ * server's local timezone, used as the cutoff for future bin collections.
+ */
+function getTodayAtMidnight() {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    return today;
+}
+
 exports.main = async (event, context) => {
     try {
         const calendarHtml = await fetchCalendarHtml();
         const binDays = extractBinDays(calendarHtml);
 
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
+        const today = getTodayAtMidnight();
 
         const events = [];
         for (const binDay of binDays) {
