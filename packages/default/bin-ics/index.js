@@ -14,10 +14,10 @@ const COUNCIL_CODE = 'SNO';
 const UPRN = process.env.UPRN || '2630184867';
 
 const BIN_TYPES = [
-    { name: 'General Waste', keys: ['Ref date', 'Ref this'] },
-    { name: 'Mixed Recycling', keys: ['Rec date', 'Rec this'] },
-    { name: 'Garden Waste', keys: ['Grn date', 'Grn this'] },
-    { name: 'Food Waste', keys: ['Food date', 'Fd date', 'Fod date', 'Food this', 'Fd this', 'Fod this'] }
+    { name: 'General Waste', keys: ['ref date', 'ref this'] },
+    { name: 'Mixed Recycling', keys: ['rec date', 'rec this'] },
+    { name: 'Garden Waste', keys: ['grn date', 'grn this'] },
+    { name: 'Food Waste', keys: ['food date', 'fd date', 'fod date', 'food this', 'fd this', 'fod this'] }
 ];
 
 const MONTHS = [
@@ -104,7 +104,7 @@ function extractBinDays(calendarHtml) {
 
                 const cellContentLower = ($cell.html() || '').toLowerCase();
                 const matchedBins = BIN_TYPES.filter((bin) =>
-                    bin.keys.some((key) => cellContentLower.includes(key.toLowerCase()))
+                    bin.keys.some((key) => cellContentLower.includes(key))
                 );
                 if (matchedBins.length === 0) continue;
 
