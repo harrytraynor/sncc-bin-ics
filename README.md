@@ -32,8 +32,9 @@ No database is required. Place the function behind a CDN-enabled custom domain:
 its `Cache-Control` header caches the feed for 12 hours by default and serves stale
 content for up to one day when the origin is unavailable. Set `CACHE_TTL_SECONDS`
 to a value between 21600 and 86400 to change the CDN cache period. Calendar clients
-revalidate each request with the CDN rather than retaining their own cached copy, so
-schedule changes are picked up promptly without sending every request to the function.
+can revalidate with the CDN rather than retaining their own cached copy, so
+schedule changes are picked up promptly without sending every request to the function;
+the exact client-cache behavior depends on the calendar application.
 
 Structured metrics are written to function logs for cache misses, upstream failures,
 empty calendars, refresh latency, and execution time. Create DigitalOcean log alerts
