@@ -212,6 +212,7 @@ async function cacheCalendar(calendar) {
         const client = await getRedisClient();
         if (client) {
             await client.set(CACHE_KEY, JSON.stringify(calendar), {
+                // Preserve a stale response for one additional freshness period.
                 EX: CACHE_TTL_SECONDS * 2
             });
         }
