@@ -18,6 +18,19 @@ Deployable as a DigitalOcean Function (Node.js 22).
    - Subscribe to the function’s URL as a calendar feed (`.ics`).
    - Events will automatically appear and update.
 
+## Deploy
+Run these from the repository root:
+
+```powershell
+doctl auth init
+doctl serverless install
+doctl serverless connect .
+doctl serverless deploy .
+```
+
+If you already have the serverless plugin installed, you can skip `doctl serverless install`.
+After deployment, the feed should be available at `/default/bin-ics`.
+
 ## API Endpoint
 The function serves an `.ics` file at: GET /default/bin-ics
 (Adjust path as per your deployment.)

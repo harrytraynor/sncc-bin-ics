@@ -28,9 +28,9 @@ const CACHE_TTL_SECONDS = Number.isFinite(RAW_CACHE_TTL)
 const httpAgent = new Agent({ keepAlive: true, maxSockets: 10 });
 
 const BIN_TYPES = [
-    { name: 'General Waste', keys: ['ref date', 'ref this'] },
-    { name: 'Mixed Recycling', keys: ['rec date', 'rec this'] },
-    { name: 'Garden Waste', keys: ['grn date', 'grn this'] },
+    { name: 'Waste', keys: ['ref date', 'ref this'] },
+    { name: 'Recycling', keys: ['rec date', 'rec this'] },
+    { name: 'Gardening Waste', keys: ['grn date', 'grn this'] },
     { name: 'Food Waste', keys: ['food date', 'fd date', 'fod date', 'food this', 'fd this', 'fod this'] }
 ];
 
