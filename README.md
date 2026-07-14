@@ -1,7 +1,7 @@
 # Bin Collection ICS Calendar API
 
 Automatically generate a live .ics calendar feed for your local bin collection schedule, using South Norfolk Council's bin collection calendar service.  
-Deployable as a DigitalOcean Function (Node.js 18).
+Deployable as a DigitalOcean Function (Node.js 22).
 
 ## Features
 - **Live .ics feed** — always up to date from the council’s API.
@@ -11,7 +11,7 @@ Deployable as a DigitalOcean Function (Node.js 18).
 
 ## Usage
 1. **Deploy as a DigitalOcean serverless function**  
-   - Use Node.js 18 runtime.
+   - Use the Node.js 22 runtime.
    - No extra build tools required.
 
 2. **Configure your calendar client**  
@@ -23,8 +23,22 @@ The function serves an `.ics` file at: GET /default/bin-ics
 (Adjust path as per your deployment.)
 
 ## Environment
-- Node.js 18
+- Node.js 22
 - No secrets required; reads public council API.
+
+### Performance and resilience
+
+No database is required. Place the function behind a CDN-enabled custom domain:
+its `Cache-Control` header caches the feed for 12 hours by default and serves stale
+content for up to one day when the origin is unavailable. Set `CACHE_TTL_SECONDS`
+to a value between 21600 and 86400 to change the CDN cache period. Calendar clients
+can revalidate with the CDN rather than retaining their own cached copy, so
+schedule changes are picked up promptly without sending every request to the function;
+the exact client-cache behavior depends on the calendar application.
+
+Structured metrics are written to function logs for upstream failures, empty calendars,
+calendar generation latency, and execution time. Create DigitalOcean log alerts for
+`upstream_error` and `empty_calendar`, and monitor `function_duration_ms`.
 
 ## Example Output
 - Calendar events for all bin collection dates (all-day)
